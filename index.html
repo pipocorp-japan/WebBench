@@ -3,482 +3,552 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebGL ベンチマーク</title>
-    <!-- Tailwind CSSを読み込みます -->
+    <title>WebBench - CPU Benchmark</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- フォントとしてInterを使用します -->
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        
         body {
-            font-family: 'Inter', 'Noto Sans JP', sans-serif;
-            /* キャンバスがクリックイベントを奪うのを防ぎ、下のテキストを選択できるようにします */
-            overflow: hidden; 
+            font-family: 'Inter', sans-serif;
+            background-color: #1a1a1a;
+            color: #e5e5e5;
         }
-        #webgl-canvas {
+        
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .canvas-container {
+            position: relative;
             width: 100%;
-            height: 100%;
-            display: block;
+            padding-bottom: 56.25%; /* 16:9 Aspect Ratio */
+            background-color: #000;
+            border: 1px solid #333;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
         }
-        /* [改善点④] Canvasのレイアウトを修正：position: fixed; inset: 0; でiPad等のズレを防止 */
-        #canvas-container {
-            position: fixed;
-            inset: 0;
-        }
-        /* UI要素がキャンバスより手前に来るようにします */
-        .ui-overlay {
+
+        canvas {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            pointer-events: none; /* UI要素以外はクリックを透過 */
+            image-rendering: pixelated;
         }
-        .ui-content {
-            pointer-events: auto; /* UI要素はクリック可能に */
+
+        .btn-start {
+            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+            transition: all 0.2s;
+        }
+        .btn-start:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(234, 88, 12, 0.4);
+        }
+        .btn-start:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            filter: grayscale(0.8);
+        }
+
+        .stat-card {
+            background-color: #262626;
+            border-left: 4px solid #f97316;
+        }
+
+        .grid-bg {
+            background-image: 
+                linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+
+        /* Loading shimmer for status */
+        @keyframes shimmer {
+            0% { opacity: 0.5; }
+            50% { opacity: 1; }
+            100% { opacity: 0.5; }
+        }
+        .rendering-pulse {
+            animation: shimmer 1.5s infinite;
         }
     </style>
 </head>
-<body class="bg-gray-900 text-white">
+<body class="min-h-screen grid-bg flex flex-col items-center justify-center p-4">
 
-    <!-- 3D描画用のキャンバス -->
-    <div id="canvas-container">
-        <canvas id="webgl-canvas"></canvas>
-    </div>
-
-    <!-- UIオーバーレイ -->
-    <div class="ui-overlay flex flex-col items-center justify-center min-h-screen p-4 sm:p-8">
-        <div class="ui-content bg-gray-900 bg-opacity-80 backdrop-blur-sm p-6 sm:p-8 rounded-2xl shadow-xl text-center max-w-xl w-full">
-            
-            <h1 class="text-3xl sm:text-4xl font-bold mb-4 text-blue-300">WebGL ベンチマーク</h1>
-            <p class="text-sm sm:text-lg text-gray-300 mb-6">
-                GPUとCPUの負荷を同時にかけ、設定された秒数で性能を測定します。
-            </p>
-
-            <!-- スコア表示エリア -->
-            <!-- [改善点⑤] Max FPSとMin FPSの表示を追加し、4分割のグリッドにする -->
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-6">
-                <div class="p-2 sm:p-3 rounded-lg bg-gray-800">
-                    <div class="text-xs uppercase text-gray-400">現在のFPS</div>
-                    <div id="current-fps" class="text-2xl sm:text-3xl font-bold text-white">-</div>
-                </div>
-                <div class="p-2 sm:p-3 rounded-lg bg-gray-800">
-                    <div class="text-xs uppercase text-gray-400">平均スコア</div>
-                    <div id="average-score" class="text-2xl sm:text-3xl font-bold text-green-400">-</div>
-                </div>
-                 <div class="p-2 sm:p-3 rounded-lg bg-gray-800">
-                    <div class="text-xs uppercase text-gray-400">Max FPS</div>
-                    <div id="max-fps" class="text-2xl sm:text-3xl font-bold text-yellow-400">-</div>
-                </div>
-                <div class="p-2 sm:p-3 rounded-lg bg-gray-800">
-                    <div class="text-xs uppercase text-gray-400">Min FPS</div>
-                    <div id="min-fps" class="text-2xl sm:text-3xl font-bold text-red-400">-</div>
-                </div>
-            </div>
-            
-            <!-- ランク表示エリアを独立させる -->
-            <div class="p-4 sm:p-5 rounded-lg bg-gray-800 mb-6">
-                <div class="text-sm uppercase text-gray-400">最終ランク</div>
-                <div id="rank-display" class="text-4xl sm:text-5xl font-extrabold text-gray-500">-</div>
-            </div>
-
-            <!-- GPU負荷設定スライダー -->
-            <div class="mb-4">
-                <label for="loadSliderGpu" class="block text-sm uppercase text-gray-400 mb-2 text-left">GPU負荷 (描画オブジェクト数)</label>
-                <div class="flex items-center space-x-4">
-                    <input id="loadSliderGpu" type="range" min="0.1" max="10.0" value="1.0" step="0.1" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50">
-                    <span id="loadValueGpu" class="text-lg font-bold text-blue-300 w-16 text-right">1.0 x</span>
-                </div>
-                <div id="loadDescriptionGpu" class="text-xs text-gray-500 mt-2 text-left">
-                    (負荷 1.0 = 5000 オブジェクト, 負荷 10.0 = 50000 オブジェクト)
-                </div>
-            </div>
-
-            <!-- CPU負荷設定スライダー -->
-            <div class="mb-6">
-                <label for="loadSliderCpu" class="block text-sm uppercase text-gray-400 mb-2 text-left">CPU負荷 (JSONエンコード/デコード)</label>
-                <div class="flex items-center space-x-4">
-                    <input id="loadSliderCpu" type="range" min="0.1" max="10.0" value="1.0" step="0.1" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50">
-                    <span id="loadValueCpu" class="text-lg font-bold text-blue-300 w-16 text-right">1.0 x</span>
-                </div>
-                <div id="loadDescriptionCpu" class="text-xs text-gray-500 mt-2 text-left">
-                    (負荷 1.0 = 標準の計算量, 負荷 10.0 = 最大計算量)
-                </div>
-            </div>
-
-            <!-- テスト時間設定要素 -->
-            <div class="mb-6">
-                <label for="testDuration" class="block text-sm uppercase text-gray-400 mb-2 text-left">テスト時間 (秒)</label>
-                <div class="flex items-center space-x-4">
-                    <input id="testDuration" type="number" min="5" max="60" value="10" step="5" class="w-24 text-center bg-gray-700 text-white p-2 rounded-lg focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50">
-                    <span class="text-lg font-bold text-gray-400 w-16 text-left">秒</span>
-                </div>
-                <div class="text-xs text-gray-500 mt-2 text-left">
-                    (5秒から60秒まで設定可能)
-                </div>
-            </div>
-
-            <!-- ステータス表示 -->
-            <div id="status" class="text-lg text-gray-400 h-8 mb-6">
-                ボタンを押して開始してください
-            </div>
-
-            <!-- 開始ボタン -->
-            <button id="startButton" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-lg text-xl transition-all duration-300 shadow-lg focus:outline-none focus:ring-4 focus:ring-blue-500 focus:ring-opacity-50 disabled:opacity-50 disabled:cursor-not-allowed">
-                ベンチマーク開始
-            </button>
+    <!-- Header -->
+    <header class="w-full max-w-5xl mb-6 flex justify-between items-end">
+        <div>
+            <h1 class="text-3xl font-bold text-white tracking-tight">Web<span class="text-orange-500">Bench</span></h1>
+            <p class="text-gray-400 text-sm mt-1">High-Load JavaScript Raytracing Benchmark</p>
         </div>
-    </div>
+        <div class="text-right">
+            <div id="system-info" class="text-sm text-gray-300 mono">検知中...</div>
+        </div>
+    </header>
 
-    <!-- three.jsライブラリを読み込みます -->
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.min.js"
+    <!-- Main Content -->
+    <main class="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-4 gap-6">
+        
+        <!-- Left Sidebar (Controls & Stats) -->
+        <aside class="lg:col-span-1 space-y-4 order-2 lg:order-1">
+            
+            <!-- Controls -->
+            <div class="bg-neutral-800 p-4 rounded-lg border border-neutral-700 shadow-lg">
+                <button id="start-btn" class="btn-start w-full py-3 px-4 rounded font-bold text-white text-lg shadow-md mb-3 flex items-center justify-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Start
+                </button>
+                <div class="text-xs text-gray-500 text-center">
+                    高負荷テストです。<br>CPU使用率が100%になります。
+                </div>
+            </div>
+
+            <!-- Live Status -->
+            <div class="stat-card p-4 rounded-r-lg shadow-lg">
+                <div class="text-gray-400 text-xs uppercase tracking-wider mb-1">Status</div>
+                <div id="status-text" class="text-white font-medium">Ready</div>
+                
+                <div class="w-full bg-gray-700 h-1.5 mt-3 rounded-full overflow-hidden">
+                    <div id="progress-bar" class="h-full bg-orange-500 w-0 transition-all duration-300"></div>
+                </div>
+                <div id="progress-text" class="text-right text-xs text-orange-400 mt-1 mono">0%</div>
+            </div>
+
+            <!-- Score Box -->
+            <div class="bg-neutral-800 p-4 rounded-lg border border-neutral-700 shadow-lg relative overflow-hidden group">
+                <div class="text-gray-400 text-xs uppercase tracking-wider mb-2">Score</div>
+                <div class="flex items-baseline gap-1">
+                    <span id="score-display" class="text-4xl font-bold text-orange-500 mono">--</span>
+                    <span class="text-sm text-gray-500 font-bold">pts</span>
+                </div>
+                <div id="time-display" class="text-xs text-gray-500 mt-2 mono">Time: --:--</div>
+            </div>
+
+            <!-- Tech Specs -->
+            <div class="bg-neutral-900 p-4 rounded-lg border border-neutral-800 text-xs text-gray-400 space-y-2 font-mono">
+                <div class="flex justify-between">
+                    <span>Threads:</span>
+                    <span id="thread-count" class="text-gray-200">--</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Resolution:</span>
+                    <span class="text-gray-200">1280x720</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Samples/Px:</span>
+                    <span class="text-gray-200 text-orange-400">64 (High)</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Right Content (Viewport) -->
+        <div class="lg:col-span-3 order-1 lg:order-2">
+            <div class="canvas-container rounded-lg overflow-hidden relative">
+                <canvas id="render-canvas" width="1280" height="720"></canvas>
+                
+                <!-- Overlay for "Finished" -->
+                <div id="finish-overlay" class="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center opacity-0 pointer-events-none transition-opacity duration-500">
+                    <div class="text-center transform scale-90 transition-transform duration-500" id="finish-content">
+                        <h2 class="text-4xl font-bold text-white mb-2">Render Complete</h2>
+                        <p class="text-orange-400 text-xl font-mono" id="final-score-overlay">0 pts</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <footer class="mt-8 text-gray-600 text-xs text-center">
+        <p>WebRayBench uses CPU-based ray tracing via Web Workers.</p>
+        <p class="mt-1 opacity-50">Caution: High CPU usage expected.</p>
+    </footer>
+
+    <!-- Worker Script -->
+    <script id="worker-code" type="javascript/worker">
+        // --- Vector Math Class ---
+        class Vec3 {
+            constructor(x, y, z) { this.x = x; this.y = y; this.z = z; }
+            add(v) { return new Vec3(this.x + v.x, this.y + v.y, this.z + v.z); }
+            sub(v) { return new Vec3(this.x - v.x, this.y - v.y, this.z - v.z); }
+            mul(s) { return new Vec3(this.x * s, this.y * s, this.z * s); }
+            dot(v) { return this.x * v.x + this.y * v.y + this.z * v.z; }
+            cross(v) { return new Vec3(this.y * v.z - this.z * v.y, this.z * v.x - this.x * v.z, this.x * v.y - this.y * v.x); }
+            normalize() { 
+                let mag = Math.sqrt(this.x*this.x + this.y*this.y + this.z*this.z); 
+                return mag === 0 ? new Vec3(0,0,0) : new Vec3(this.x/mag, this.y/mag, this.z/mag); 
             }
         }
+
+        // --- Random Generator (Simple LCG for deterministic scene in workers) ---
+        // We actually want deterministic scene across workers so everyone renders same world.
+        let seed = 123456789;
+        function random() {
+            seed = (1103515245 * seed + 12345) % 2147483648;
+            return seed / 2147483648;
+        }
+        function randomRange(min, max) { return min + (max - min) * random(); }
+
+        // --- Scene Setup ---
+        let spheres = [];
+        
+        function initScene() {
+            if (spheres.length > 0) return;
+
+            // Ground
+            spheres.push({ center: new Vec3(0, -1000, 0), radius: 1000, color: new Vec3(0.5, 0.5, 0.5), type: 'matte' });
+
+            // Big spheres
+            spheres.push({ center: new Vec3(0, 1, 0), radius: 1.0, color: new Vec3(1.0, 0.2, 0.2), type: 'matte' }); // Red
+            spheres.push({ center: new Vec3(-4, 1, 0), radius: 1.0, color: new Vec3(0.4, 0.8, 0.4), type: 'matte' }); // Green
+            spheres.push({ center: new Vec3(4, 1, 0), radius: 1.0, color: new Vec3(0.7, 0.6, 0.5), type: 'metal' }); // Metal
+
+            // Generate many random small spheres to increase intersection cost
+            // This is the "Extreme" part - checking intersection against many objects per ray
+            for (let a = -11; a < 11; a++) {
+                for (let b = -11; b < 11; b++) {
+                    const chooseMat = random();
+                    const center = new Vec3(a + 0.9 * random(), 0.2, b + 0.9 * random());
+                    
+                    if (center.sub(new Vec3(4, 0.2, 0)).dot(center.sub(new Vec3(4, 0.2, 0))) > 0.9) {
+                        if (chooseMat < 0.8) {
+                            // diffuse
+                            const col = new Vec3(random()*random(), random()*random(), random()*random());
+                            spheres.push({ center: center, radius: 0.2, color: col, type: 'matte' });
+                        } else {
+                            // metal
+                            const col = new Vec3(0.5 * (1 + random()), 0.5 * (1 + random()), 0.5 * (1 + random()));
+                            spheres.push({ center: center, radius: 0.2, color: col, type: 'metal' });
+                        }
+                    }
+                }
+            }
+        }
+
+        const lights = [
+            { pos: new Vec3(-10, 20, 10), intensity: 1.2 },
+            { pos: new Vec3(10, 20, -10), intensity: 0.8 },
+        ];
+
+        function intersectSphere(origin, dir, sphere) {
+            const L = sphere.center.sub(origin);
+            const tca = L.dot(dir);
+            if (tca < 0) return { hit: false };
+            const d2 = L.dot(L) - tca * tca;
+            if (d2 > sphere.radius * sphere.radius) return { hit: false };
+            const thc = Math.sqrt(sphere.radius * sphere.radius - d2);
+            return { hit: true, dist: tca - thc };
+        }
+
+        function trace(origin, dir, depth) {
+            let nearestDist = Infinity;
+            let hitObj = null;
+
+            // Brute force intersection check against ALL spheres
+            // With ~100 spheres, this becomes expensive per ray
+            for (let s of spheres) {
+                const res = intersectSphere(origin, dir, s);
+                if (res.hit && res.dist < nearestDist && res.dist > 0.001) {
+                    nearestDist = res.dist;
+                    hitObj = s;
+                }
+            }
+
+            if (!hitObj) {
+                const unitDir = dir.normalize();
+                const t = 0.5 * (unitDir.y + 1.0);
+                return new Vec3(1.0, 1.0, 1.0).mul(1.0 - t).add(new Vec3(0.5, 0.7, 1.0).mul(t)); // Sky
+            }
+
+            const hitPoint = origin.add(dir.mul(nearestDist));
+            const normal = hitPoint.sub(hitObj.center).normalize();
+            
+            // Limit recursion depth to keep it finite but heavy
+            if (depth < 8) { // Increased depth limit for more reflections
+                if (hitObj.type === 'metal') {
+                    const reflectDir = dir.sub(normal.mul(2 * dir.dot(normal))).normalize();
+                    // Add some fuzziness to metal
+                    const fuzz = 0.1;
+                    const fuzzedDir = reflectDir.add(new Vec3(random()-0.5, random()-0.5, random()-0.5).mul(fuzz)).normalize();
+                    if (fuzzedDir.dot(normal) > 0) {
+                        return trace(hitPoint.add(normal.mul(0.001)), fuzzedDir, depth + 1).mul(0.8);
+                    }
+                }
+            }
+
+            // Matte (Lambertian approx with simple lighting)
+            let color = new Vec3(0, 0, 0);
+            for (let light of lights) {
+                const lightDir = light.pos.sub(hitPoint).normalize();
+                
+                // Shadow Check (Expensive!)
+                let inShadow = false;
+                for (let s of spheres) {
+                    if (s === hitObj) continue;
+                    // Simple optimization: only check shadows if sphere is somewhat in the direction of light
+                    const res = intersectSphere(hitPoint.add(normal.mul(0.001)), lightDir, s);
+                    if (res.hit) {
+                        const distToLight = light.pos.sub(hitPoint).dot(lightDir);
+                        if (res.dist < distToLight) {
+                            inShadow = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!inShadow) {
+                    const diff = Math.max(0, normal.dot(lightDir));
+                    color = color.add(hitObj.color.mul(diff * light.intensity));
+                }
+            }
+
+            return color.add(hitObj.color.mul(0.1)); // Ambient
+        }
+
+        self.onmessage = function(e) {
+            initScene(); // Ensure scene is generated
+            const { id, startX, startY, width, height, canvasWidth, canvasHeight } = e.data;
+            
+            const data = new Uint8ClampedArray(width * height * 4);
+            
+            // Camera
+            const lookFrom = new Vec3(13, 2, 3);
+            const lookAt = new Vec3(0, 0, 0);
+            const vup = new Vec3(0, 1, 0);
+            const distToFocus = 10.0;
+            const aperture = 0.1;
+
+            const w = lookFrom.sub(lookAt).normalize();
+            const u = vup.cross(w).normalize();
+            const v = w.cross(u);
+
+            const vfov = 20;
+            const aspect = canvasWidth / canvasHeight;
+            const theta = vfov * Math.PI / 180;
+            const halfHeight = Math.tan(theta/2);
+            const halfWidth = aspect * halfHeight;
+
+            const origin = lookFrom;
+            const lowerLeftCorner = origin
+                .sub(u.mul(halfWidth * distToFocus))
+                .sub(v.mul(halfHeight * distToFocus))
+                .sub(w.mul(distToFocus));
+            const horizontal = u.mul(2 * halfWidth * distToFocus);
+            const vertical = v.mul(2 * halfHeight * distToFocus);
+
+            // High load settings
+            const samplesPerPixel = 64; // HEAVY LOAD
+
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const globalX = startX + x;
+                    const globalY = (canvasHeight - 1) - (startY + y); 
+
+                    let pixelColor = new Vec3(0,0,0);
+
+                    for(let s = 0; s < samplesPerPixel; s++) {
+                        const s_u = (globalX + random()) / (canvasWidth - 1);
+                        const s_v = (globalY + random()) / (canvasHeight - 1);
+                        
+                        const rayDir = lowerLeftCorner.add(horizontal.mul(s_u)).add(vertical.mul(s_v)).sub(origin).normalize();
+                        pixelColor = pixelColor.add(trace(origin, rayDir, 0));
+                    }
+
+                    pixelColor = pixelColor.mul(1.0 / samplesPerPixel);
+                    pixelColor = new Vec3(Math.sqrt(pixelColor.x), Math.sqrt(pixelColor.y), Math.sqrt(pixelColor.z)); // Gamma
+
+                    const index = (y * width + x) * 4;
+                    data[index] = Math.min(255, Math.floor(pixelColor.x * 255.99));
+                    data[index + 1] = Math.min(255, Math.floor(pixelColor.y * 255.99));
+                    data[index + 2] = Math.min(255, Math.floor(pixelColor.z * 255.99));
+                    data[index + 3] = 255;
+                }
+            }
+
+            self.postMessage({
+                id,
+                startX,
+                startY,
+                width,
+                height,
+                buffer: data.buffer
+            }, [data.buffer]);
+        };
     </script>
 
-    <!-- メインのスクリプト -->
-    <script type="module">
-        import * as THREE from 'three';
+    <script>
+        const canvas = document.getElementById('render-canvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        const startBtn = document.getElementById('start-btn');
+        const statusText = document.getElementById('status-text');
+        const progressBar = document.getElementById('progress-bar');
+        const progressNum = document.getElementById('progress-text');
+        const scoreDisplay = document.getElementById('score-display');
+        const timeDisplay = document.getElementById('time-display');
+        const threadInfo = document.getElementById('thread-count');
+        const systemInfo = document.getElementById('system-info');
+        const finishOverlay = document.getElementById('finish-overlay');
+        const finalScoreOverlay = document.getElementById('final-score-overlay');
 
-        // --- DOM要素の取得 ---
-        const canvas = document.getElementById('webgl-canvas');
-        const canvasContainer = document.getElementById('canvas-container');
-        const startButton = document.getElementById('startButton');
-        const currentFpsEl = document.getElementById('current-fps');
-        const scoreEl = document.getElementById('average-score');
-        const statusEl = document.getElementById('status');
-        const loadSliderGpu = document.getElementById('loadSliderGpu');
-        const loadValueGpuEl = document.getElementById('loadValueGpu');
-        const loadDescriptionGpuEl = document.getElementById('loadDescriptionGpu');
-        const loadSliderCpu = document.getElementById('loadSliderCpu');
-        const loadValueCpuEl = document.getElementById('loadValueCpu');
-        const loadDescriptionCpuEl = document.getElementById('loadDescriptionCpu');
-        const rankEl = document.getElementById('rank-display');
-        const maxFpsEl = document.getElementById('max-fps'); 
-        const minFpsEl = document.getElementById('min-fps'); 
-        const testDurationEl = document.getElementById('testDuration'); 
-
-
-        // --- ベンチマーク設定 ---
-        const BASE_OBJECT_COUNT = 5000; // 描画するオブジェクトの数 (負荷 1.0 の時)
-        let TEST_DURATION = 10; // テスト時間 (秒)
-
-        // [改善案1] マテリアル共有化のための配列と定数
-        const NUM_SHARED_MATERIALS = 10; // 共有するマテリアルの種類
-        let sharedMaterials = []; 
-
-        // --- 3Dシーンのセットアップ ---
-        let scene, camera, renderer, group;
-        let geometry; // ジオメトリは共有する
+        // Settings
+        const TILE_SIZE = 32; // Smaller tiles for more frequent updates under high load
+        const CANVAS_WIDTH = 1280;
+        const CANVAS_HEIGHT = 720;
+        const SAMPLES_PER_PIXEL = 64; // Must match worker
         
-        // --- 状態管理 ---
-        let isRunning = false;
-        let currentLoadFactorGpu = 1.0;
-        let currentLoadFactorCpu = 1.0;
+        const logicalProcessors = navigator.hardwareConcurrency || 4;
+        threadInfo.innerText = `${logicalProcessors} Logical Cores`;
+        systemInfo.innerText = `System: ${logicalProcessors} Threads`;
+
         let startTime = 0;
-        let lastTime = 0;
-        let totalFrames = 0;
-        let currentFPS = 0;
-        let averageFPS = 0;
-        let minFPS = Infinity; 
-        let maxFPS = 0;        
-        
-        // [改善点②] FPSの移動平均用履歴
-        const fpsHistory = [];
-        const FPS_HISTORY_SIZE = 20;
+        let totalTiles = 0;
+        let completedTiles = 0;
+        let workers = [];
+        let tilesQueue = [];
+        let activeWorkers = 0;
+        let isRunning = false;
 
-        // [改善点②] FPSを安定化させるための移動平均計算関数
-        function calcSmoothedFPS(delta) {
-            const fps = 1 / delta;
-            
-            // 履歴に追加し、サイズを超えたら最古のものを削除
-            fpsHistory.push(fps);
-            if (fpsHistory.length > FPS_HISTORY_SIZE) {
-                fpsHistory.shift();
-            }
-            
-            // 平均値を計算
-            if (fpsHistory.length === 0) return 0;
-            const sum = fpsHistory.reduce((a, b) => a + b, 0);
-            return sum / fpsHistory.length;
-        }
+        const workerBlob = new Blob([document.getElementById('worker-code').textContent], { type: "text/javascript" });
+        const workerUrl = URL.createObjectURL(workerBlob);
 
-        // 初期化関数
-        function init() {
-            // シーン
-            scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x111827); // 背景色をTailwindのgray-900に合わせる
-
-            // カメラ
-            camera = new THREE.PerspectiveCamera(75, canvasContainer.clientWidth / canvasContainer.clientHeight, 0.1, 1000);
-            camera.position.z = 80;
-
-            // レンダラー
-            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
-            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Retina対応
-
-            // ライト
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-            scene.add(ambientLight);
-            const pointLight = new THREE.PointLight(0xffffff, 1);
-            pointLight.position.set(100, 100, 100);
-            scene.add(pointLight);
-
-            // オブジェクトのジオメトリ（1つ作成して共有）
-            geometry = new THREE.BoxGeometry(1, 1, 1);
-            
-            // [改善案1] 共有マテリアルを初期化
-            for (let i = 0; i < NUM_SHARED_MATERIALS; i++) {
-                sharedMaterials.push(new THREE.MeshStandardMaterial({
-                    color: Math.random() * 0xffffff,
-                    roughness: 0.7,
-                    metalness: 0.3
-                }));
-            }
-
-            // オブジェクトを格納するグループ
-            group = new THREE.Group();
-            scene.add(group);
-
-            // --- イベントリスナー ---
-            startButton.addEventListener('click', startBenchmark);
-            window.addEventListener('resize', onWindowResize);
-            
-            // GPUスライダー
-            loadSliderGpu.addEventListener('input', (e) => {
-                loadValueGpuEl.textContent = `${parseFloat(e.target.value).toFixed(1)} x`;
-            });
-            // CPUスライダー
-            loadSliderCpu.addEventListener('input', (e) => {
-                loadValueCpuEl.textContent = `${parseFloat(e.target.value).toFixed(1)} x`;
-            });
-            
-            // 初期表示をクリア
-            maxFpsEl.textContent = '-';
-            minFpsEl.textContent = '-';
-
-            // 初期設定値を取得
-            TEST_DURATION = parseInt(testDurationEl.value);
-
-            // アニメーションループ開始
-            animate();
-        }
-
-        // CPU負荷用のダミーデータ（少し大きめ）
-        const cpuLoadData = {
-            id: 12345,
-            timestamp: Date.now(),
-            text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(100),
-            nested: { a: 1, b: "string", c: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], d: true },
-            array: Array(50).fill(null).map((_, i) => ({ index: i, value: Math.random() }))
-        };
-
-        // [改善点③] CPU負荷（JSONエンコード/デコード）を実行する関数
-        function runCpuLoad(loadFactor) {
-            // 負荷 1.0 の時に、1フレームあたり 30回 実行するくらいを基準に
-            const iterations = Math.floor(30 * loadFactor); 
-            
-            try {
-                for (let i = 0; i < iterations; i++) {
-                    // エンコード (stringify) とデコード (parse) の両方を行い、CPU負荷を強化
-                    const encoded = JSON.stringify(cpuLoadData);
-                    JSON.parse(encoded);
+        function createTiles() {
+            const tiles = [];
+            for (let y = 0; y < CANVAS_HEIGHT; y += TILE_SIZE) {
+                for (let x = 0; x < CANVAS_WIDTH; x += TILE_SIZE) {
+                    const w = Math.min(TILE_SIZE, CANVAS_WIDTH - x);
+                    const h = Math.min(TILE_SIZE, CANVAS_HEIGHT - y);
+                    tiles.push({ x, y, w, h });
                 }
-            } catch (e) {
-                console.error("CPU load test error:", e);
             }
+            // Shuffle for cool visual
+            for (let i = tiles.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
+            }
+            return tiles;
         }
 
+        function drawTile(data) {
+            const imageData = new ImageData(new Uint8ClampedArray(data.buffer), data.width, data.height);
+            ctx.putImageData(imageData, data.startX, data.startY);
+            ctx.strokeStyle = '#f97316';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(data.startX, data.startY, data.width, data.height);
+        }
 
-        // ベンチマーク開始処理
-        function startBenchmark() {
-            startButton.disabled = true;
-            loadSliderGpu.disabled = true; 
-            loadSliderCpu.disabled = true; 
-            testDurationEl.disabled = true; 
-
-            // 現在の設定を取得
-            currentLoadFactorGpu = parseFloat(loadSliderGpu.value);
-            currentLoadFactorCpu = parseFloat(loadSliderCpu.value);
-            TEST_DURATION = parseInt(testDurationEl.value); 
+        function updateProgress() {
+            completedTiles++;
+            const percent = ((completedTiles / totalTiles) * 100).toFixed(1);
+            progressBar.style.width = `${percent}%`;
+            progressNum.innerText = `${percent}%`;
             
-            let OBJECT_COUNT = 0;
-
-            // GPU負荷（オブジェクト数）を計算
-            OBJECT_COUNT = Math.floor(BASE_OBJECT_COUNT * currentLoadFactorGpu);
-            statusEl.textContent = ` [GPU+CPU] ${OBJECT_COUNT} 個のオブジェクトを初期化中...`;
-            
-            scoreEl.textContent = '-';
-            currentFpsEl.textContent = '-';
-            rankEl.textContent = '-';
-            maxFpsEl.textContent = '-'; 
-            minFpsEl.textContent = '-'; 
-            rankEl.className = "text-4xl sm:text-5xl font-extrabold text-gray-500"; 
-
-            // UIを更新するため、重い処理を次のフレームに回す
-            setTimeout(() => {
-                // [改善点①] 既存のオブジェクトのジオメトリをdisposeしてメモリリークを防ぐ
-                // マテリアルは共有しているため、ここではdisposeしない
-                group.children.forEach(obj => {
-                    if (obj.geometry) obj.geometry.dispose();
-                    // マテリアルは共有しているため、disposeしない
-                });
-                group.clear(); 
-
-                // 大量のオブジェクトを生成
-                for (let i = 0; i < OBJECT_COUNT; i++) {
-                    // [改善案1] 共有マテリアルからランダムに選択
-                    const material = sharedMaterials[Math.floor(Math.random() * NUM_SHARED_MATERIALS)];
-                    
-                    // Geometryは共有
-                    const cube = new THREE.Mesh(geometry, material);
-
-                    // ランダムな位置と回転を設定
-                    cube.position.set(
-                        (Math.random() - 0.5) * 150,
-                        (Math.random() - 0.5) * 150,
-                        (Math.random() - 0.5) * 150
-                    );
-                    cube.rotation.set(
-                        Math.random() * Math.PI * 2,
-                        Math.random() * Math.PI * 2,
-                        Math.random() * Math.PI * 2
-                    );
-                    
-                    // [改善案2] 個別回転用のランダムな速度プロパティを追加
-                    // グループ回転とは別に、オブジェクト自体にも独自の回転負荷を与える
-                    cube.rotationSpeedX = (Math.random() - 0.5) * 0.5; 
-                    cube.rotationSpeedY = (Math.random() - 0.5) * 0.5;
-                    cube.rotationSpeedZ = (Math.random() - 0.5) * 0.5; 
-
-                    group.add(cube);
-                }
-
-                // 統計情報をリセットして開始
-                totalFrames = 0;
-                averageFPS = 0;
-                currentFPS = 0;
-                minFPS = Infinity; 
-                maxFPS = 0;        
-                fpsHistory.length = 0; 
-                
-                startTime = performance.now();
-                lastTime = startTime;
-                isRunning = true;
-
-                // ステータス表示に現在の秒数を含める
-                statusEl.textContent = `[GPU+CPU] ベンチマーク実行中... (${TEST_DURATION}秒)`;
-                
-            }, 10); // 10ms待機
-        }
-
-        // ランクを決定するヘルパー関数
-        function getRank(fps) {
-            if (fps >= 60) return { rank: 'S', color: 'text-yellow-400' };
-            if (fps >= 50) return { rank: 'A', color: 'text-red-400' };
-            if (fps >= 40) return { rank: 'B', color: 'text-blue-400' };
-            if (fps >= 30) return { rank: 'C', color: 'text-green-400' };
-            if (fps >= 20) return { rank: 'D', color: 'text-gray-400' };
-            return { rank: 'E', color: 'text-gray-600' };
-        }
-
-        // ベンチマーク停止処理
-        function stopBenchmark() {
-            isRunning = false;
-            startButton.disabled = false;
-            loadSliderGpu.disabled = false; 
-            loadSliderCpu.disabled = false; 
-            testDurationEl.disabled = false; 
-            
-            // 最終スコアを計算して表示
-            const finalScore = averageFPS.toFixed(1);
-            const { rank, color } = getRank(averageFPS);
-
-            statusEl.textContent = `[GPU+CPU] テスト完了！ 最終スコア: ${finalScore} FPS`;
-            scoreEl.textContent = finalScore;
-            currentFpsEl.textContent = '0.0';
-            rankEl.textContent = rank;
-            rankEl.className = `text-4xl sm:text-5xl font-extrabold ${color}`; // ランクに応じて色を変更
-
-            // [改善点⑤] Min/Max FPSの表示
-            maxFpsEl.textContent = maxFPS.toFixed(1);
-            minFpsEl.textContent = (minFPS === Infinity ? 0 : minFPS).toFixed(1);
-        }
-
-        // ウィンドウリサイズ処理
-        function onWindowResize() {
-            camera.aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        }
-
-        // アニメーションループ
-        function animate() {
-            requestAnimationFrame(animate);
-
             const now = performance.now();
-            const delta = (now - lastTime) / 1000; // 秒単位の経過時間
-            lastTime = now;
-
-            if (isRunning) {
-
-                // --- GPU負荷の更新 ---
-                // [改善案2] 個別オブジェクトの回転処理
-                group.children.forEach(obj => {
-                    // カスタムプロパティ（rotationSpeedXなど）があるオブジェクトのみを回転
-                    if (obj.rotationSpeedX) {
-                        obj.rotation.x += obj.rotationSpeedX * delta;
-                        obj.rotation.y += obj.rotationSpeedY * delta;
-                        obj.rotation.z += obj.rotationSpeedZ * delta;
-                    }
-                });
-
-                // オブジェクトのグループ全体を回転させる (大きな動き)
-                group.rotation.y += 0.1 * delta;
-                group.rotation.x += 0.05 * delta;
-                
-                // --- CPU負荷の更新 ---
-                runCpuLoad(currentLoadFactorCpu); // CPU負荷を常に実行
-
-                // --- 統計情報の更新 ---
-                totalFrames++;
-                const elapsedTime = (now - startTime) / 1000; // 合計経過時間（秒）
-                
-                // [改善点②] 移動平均を計算してブレを抑えたCurrent FPSを取得
-                const smoothedFPS = calcSmoothedFPS(delta); 
-                currentFPS = smoothedFPS; 
-                averageFPS = totalFrames / elapsedTime; // 平均FPS
-
-                // [改善点⑤] Min/Max FPSの更新 (テスト開始後1秒経過してから計測開始)
-                if (elapsedTime > 1.0) {
-                    if (smoothedFPS < minFPS) {
-                        minFPS = smoothedFPS;
-                    }
-                    if (smoothedFPS > maxFPS) {
-                        maxFPS = smoothedFPS;
-                    }
-                }
-
-                // --- UIの更新 ---
-                currentFpsEl.textContent = currentFPS.toFixed(1);
-                scoreEl.textContent = averageFPS.toFixed(1);
-
-                // --- テスト終了判定 ---
-                if (elapsedTime >= TEST_DURATION) {
-                    stopBenchmark();
-                }
-            }
-            
-            // レンダリング
-            renderer.render(scene, camera);
+            const elapsed = ((now - startTime) / 1000).toFixed(1);
+            timeDisplay.innerText = `Time: ${elapsed}s`;
         }
 
-        // 初期化実行
-        window.onload = init; // 確実にウィンドウロード後に実行
+        function onTileComplete(workerIndex) {
+            if (tilesQueue.length > 0) {
+                const tile = tilesQueue.pop();
+                workers[workerIndex].postMessage({
+                    id: workerIndex,
+                    startX: tile.x,
+                    startY: tile.y,
+                    width: tile.w,
+                    height: tile.h,
+                    canvasWidth: CANVAS_WIDTH,
+                    canvasHeight: CANVAS_HEIGHT
+                });
+            } else {
+                activeWorkers--;
+                if (activeWorkers === 0) {
+                    finishBenchmark();
+                }
+            }
+        }
+
+        function startBenchmark() {
+            if (isRunning) return;
+            isRunning = true;
+            
+            startBtn.disabled = true;
+            startBtn.innerHTML = 'Rendering...';
+            statusText.innerText = "Processing (High Load)";
+            statusText.className = "text-orange-500 font-bold rendering-pulse";
+            scoreDisplay.innerText = "--";
+            finishOverlay.classList.remove('opacity-100', 'pointer-events-auto');
+            finishOverlay.classList.add('opacity-0', 'pointer-events-none');
+            
+            ctx.fillStyle = "#000";
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            
+            tilesQueue = createTiles();
+            totalTiles = tilesQueue.length;
+            completedTiles = 0;
+
+            const threadsToUse = Math.min(logicalProcessors, 32); 
+            
+            if (workers.length === 0) {
+                for (let i = 0; i < threadsToUse; i++) {
+                    const w = new Worker(workerUrl);
+                    w.onmessage = (e) => {
+                        drawTile(e.data);
+                        updateProgress();
+                        onTileComplete(i);
+                    };
+                    workers.push(w);
+                }
+            }
+
+            startTime = performance.now();
+            activeWorkers = workers.length;
+
+            for (let i = 0; i < workers.length; i++) {
+                onTileComplete(i);
+            }
+        }
+
+        function finishBenchmark() {
+            const endTime = performance.now();
+            const durationSeconds = (endTime - startTime) / 1000;
+            isRunning = false;
+
+            // Revised Score Calculation for "Extreme" workload
+            // Total Primary Rays = 1280 * 720 * 64 = 58,982,400
+            // Scene complexity factor (approximate spheres checks per ray) ~ 50-100
+            // We want a score that feels good. e.g. 5000-10000 range for good CPUs.
+            
+            const totalPixels = CANVAS_WIDTH * CANVAS_HEIGHT;
+            const rays = totalPixels * SAMPLES_PER_PIXEL;
+            
+            // Adjust divisor to calibrate score to a "Cinebench-like" number
+            // 60 million rays / 10 seconds = 6 million rays/sec.
+            // Let's say 1000 pts = decent speed.
+            const score = Math.floor((rays / durationSeconds) / 2000); 
+
+            startBtn.disabled = false;
+            startBtn.innerHTML = 'Start Benchmark';
+            statusText.innerText = "Finished";
+            statusText.className = "text-green-500 font-bold";
+            scoreDisplay.innerText = score;
+            finalScoreOverlay.innerText = `${score} pts`;
+            
+            finishOverlay.classList.remove('opacity-0', 'pointer-events-none');
+            finishOverlay.classList.add('opacity-100', 'pointer-events-auto');
+            document.getElementById('finish-content').classList.remove('scale-90');
+            document.getElementById('finish-content').classList.add('scale-100');
+        }
+
+        startBtn.addEventListener('click', startBenchmark);
+
+        ctx.fillStyle = "#0a0a0a";
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        ctx.font = "20px JetBrains Mono";
+        ctx.fillStyle = "#333";
+        ctx.textAlign = "center";
+        ctx.fillText("Ready for Heavy Load", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
     </script>
 </body>
 </html>
